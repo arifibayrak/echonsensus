@@ -5,7 +5,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createMistral } from '@ai-sdk/mistral';
 import type { ConsensusRequest, ModelId, SSEEvent } from '@/lib/types';
-import { MODELS } from '@/lib/models';
+import { MODELS, calcCost } from '@/lib/models';
 import {
   buildPositionPrompt,
   buildCritiquePrompt,
@@ -36,6 +36,21 @@ function encode(event: SSEEvent): Uint8Array {
   return enc.encode(`data: ${JSON.stringify(event)}\n\n`);
 }
 
+// Wraps generateText and emits a token_usage event after each call
+async function tracked(
+  send: (e: SSEEvent) => void,
+  modelId: ModelId,
+  phase: string,
+  params: Parameters<typeof generateText>[0]
+): Promise<string> {
+  const result = await generateText(params);
+  const input = result.usage?.inputTokens ?? 0;
+  const output = result.usage?.outputTokens ?? 0;
+  const costUsd = calcCost(modelId, input, output);
+  send({ type: 'token_usage', model: modelId, phase, inputTokens: input, outputTokens: output, costUsd });
+  return result.text;
+}
+
 // Parse "On ModelName: AGREE/DISAGREE: ..." out of a critique response
 function parseCritiques(
   text: string,
@@ -45,7 +60,6 @@ function parseCritiques(
   return otherModels
     .filter((m) => m.modelId !== fromModel)
     .map((other) => {
-      // Match "On ModelName: ..." anywhere in the text (handles first line without leading newline)
       const escaped = other.modelName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const regex = new RegExp(
         `(?:^|\\n)On\\s+${escaped}\\s*:\\s*([\\s\\S]*?)(?=\\n\\nOn\\s+|\\nOn\\s+|$)`,
@@ -83,11 +97,10 @@ export async function POST(req: NextRequest) {
         type PositionEntry = { modelId: ModelId; modelName: string; summary: string; fullText: string };
         const positionResults = await Promise.allSettled(
           models.map(async (modelId): Promise<PositionEntry> => {
-            const prompt = buildPositionPrompt(modelId, topic);
             try {
-              const { text } = await generateText({
+              const text = await tracked(send, modelId, 'positions', {
                 model: getModel(modelId, apiKeys),
-                prompt,
+                prompt: buildPositionPrompt(modelId, topic),
                 maxOutputTokens: 450,
               });
               const summaryMatch = text.match(/SUMMARY:\s*([\s\S]+)/i);
@@ -116,15 +129,14 @@ export async function POST(req: NextRequest) {
         await Promise.allSettled(
           models.map(async (modelId) => {
             const others = positions.filter((p) => p.modelId !== modelId);
-            const prompt = buildCritiquePrompt(
-              modelId,
-              topic,
-              others.map((o) => ({ modelName: o.modelName, summary: o.summary }))
-            );
             try {
-              const { text } = await generateText({
+              const text = await tracked(send, modelId, 'critiques', {
                 model: getModel(modelId, apiKeys),
-                prompt,
+                prompt: buildCritiquePrompt(
+                  modelId,
+                  topic,
+                  others.map((o) => ({ modelName: o.modelName, summary: o.summary }))
+                ),
                 maxOutputTokens: 300,
               });
               allCritiqueTexts.push(`${MODELS[modelId].name}:\n${text}`);
@@ -156,7 +168,7 @@ export async function POST(req: NextRequest) {
           const synthesizerId: ModelId = models.includes('claude') ? 'claude' : models[0];
           let disagreementDescription = 'The models have different views.';
           try {
-            const { text } = await generateText({
+            const text = await tracked(send, synthesizerId, 'disagreement', {
               model: getModel(synthesizerId, apiKeys),
               prompt: buildDisagreementDescriptionPrompt(topic, allCritiqueTexts.join('\n\n')),
               maxOutputTokens: 80,
@@ -174,11 +186,10 @@ export async function POST(req: NextRequest) {
             const roundResults = await Promise.allSettled(
               models.map(async (modelId): Promise<DebateMsgEntry> => {
                 const history = debateMessages.map((m) => ({ modelName: m.modelName, text: m.text }));
-                const prompt = buildDebatePrompt(modelId, topic, history, disagreementDescription);
                 try {
-                  const { text } = await generateText({
+                  const text = await tracked(send, modelId, `debate-round-${round}`, {
                     model: getModel(modelId, apiKeys),
-                    prompt,
+                    prompt: buildDebatePrompt(modelId, topic, history, disagreementDescription),
                     maxOutputTokens: 120,
                   });
                   send({ type: 'debate_message', model: modelId, modelName: MODELS[modelId].name, text, debateRound: round });
@@ -200,7 +211,7 @@ export async function POST(req: NextRequest) {
               const allHistory = debateMessages
                 .map((m) => `${m.modelName} (round ${m.debateRound}): ${m.text}`)
                 .join('\n');
-              const { text } = await generateText({
+              const text = await tracked(send, synthesizerId, `consensus-check-${round}`, {
                 model: getModel(synthesizerId, apiKeys),
                 prompt: buildConsensusCheckPrompt(topic, allHistory),
                 maxOutputTokens: 10,
@@ -216,7 +227,7 @@ export async function POST(req: NextRequest) {
         send({ type: 'phase_change', phase: 'synthesis' });
         const synthesizerId: ModelId = models.includes('claude') ? 'claude' : models[0];
         try {
-          const { text } = await generateText({
+          const text = await tracked(send, synthesizerId, 'synthesis', {
             model: getModel(synthesizerId, apiKeys),
             prompt: buildConsensusPrompt(
               topic,

@@ -1,12 +1,18 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { ChevronDown, ChevronUp, Play, RotateCcw, Loader2, AlertCircle, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Play, RotateCcw, Loader2, AlertCircle, AlertTriangle, CheckCircle2, Receipt } from 'lucide-react';
 import type { ConsensusRequest, DebatePhase, ModelId, SessionPhase, SSEEvent } from '@/lib/types';
 import { MODEL_LIST, MODELS } from '@/lib/models';
 import { ConsensusSummary } from './ConsensusSummary';
 
 // ─── Sub-types ────────────────────────────────────────────────────────────────
+
+interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+}
 
 interface PositionEntry {
   model: ModelId;
@@ -295,6 +301,94 @@ function DebateSection({
   );
 }
 
+function fmt(usd: number): string {
+  if (usd === 0) return '$0.00';
+  if (usd < 0.0001) return '<$0.0001';
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(4)}`;
+}
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return `${n}`;
+}
+
+function CostTracker({ usage }: { usage: Partial<Record<ModelId, UsageTotals>> }) {
+  const [open, setOpen] = useState(false);
+
+  const totals = Object.values(usage).reduce(
+    (acc, u) => {
+      if (!u) return acc;
+      return { inputTokens: acc.inputTokens + u.inputTokens, outputTokens: acc.outputTokens + u.outputTokens, costUsd: acc.costUsd + u.costUsd };
+    },
+    { inputTokens: 0, outputTokens: 0, costUsd: 0 }
+  );
+
+  const hasData = totals.inputTokens > 0;
+
+  return (
+    <div className="fixed bottom-4 right-4 z-30">
+      <div className="rounded-2xl border border-gray-200 bg-white shadow-lg overflow-hidden min-w-[200px]">
+        {/* Toggle bar */}
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="w-full flex items-center gap-2 px-4 py-2.5 hover:bg-gray-50 transition-colors"
+        >
+          <Receipt size={13} className="text-gray-400 flex-shrink-0" />
+          <span className="text-xs font-semibold text-gray-700 flex-1 text-left">
+            Session cost
+          </span>
+          <span className={`text-xs font-bold tabular-nums ${hasData ? 'text-violet-600' : 'text-gray-300'}`}>
+            {fmt(totals.costUsd)}
+          </span>
+          {open ? <ChevronDown size={12} className="text-gray-400" /> : <ChevronUp size={12} className="text-gray-400" />}
+        </button>
+
+        {/* Breakdown table */}
+        {open && (
+          <div className="border-t border-gray-100 px-4 py-3 space-y-1">
+            {/* Header row */}
+            <div className="grid grid-cols-4 gap-2 mb-2">
+              <span className="text-xs text-gray-400 font-medium">Model</span>
+              <span className="text-xs text-gray-400 font-medium text-right">In</span>
+              <span className="text-xs text-gray-400 font-medium text-right">Out</span>
+              <span className="text-xs text-gray-400 font-medium text-right">Cost</span>
+            </div>
+
+            {MODEL_LIST.map((model) => {
+              const u = usage[model.id];
+              return (
+                <div key={model.id} className="grid grid-cols-4 gap-2 items-center">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: model.color }} />
+                    <span className="text-xs text-gray-600 truncate">{model.name}</span>
+                  </div>
+                  <span className="text-xs tabular-nums text-gray-500 text-right">{u ? fmtTokens(u.inputTokens) : '—'}</span>
+                  <span className="text-xs tabular-nums text-gray-500 text-right">{u ? fmtTokens(u.outputTokens) : '—'}</span>
+                  <span className="text-xs tabular-nums text-gray-700 font-medium text-right">{u ? fmt(u.costUsd) : '—'}</span>
+                </div>
+              );
+            })}
+
+            {/* Total row */}
+            <div className="grid grid-cols-4 gap-2 items-center pt-2 border-t border-gray-100 mt-2">
+              <span className="text-xs font-bold text-gray-700">Total</span>
+              <span className="text-xs tabular-nums text-gray-600 font-medium text-right">{fmtTokens(totals.inputTokens)}</span>
+              <span className="text-xs tabular-nums text-gray-600 font-medium text-right">{fmtTokens(totals.outputTokens)}</span>
+              <span className="text-xs tabular-nums text-violet-700 font-bold text-right">{fmt(totals.costUsd)}</span>
+            </div>
+
+            <p className="text-[10px] text-gray-300 pt-1">
+              Prices estimated · since page load
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function ConsensusArena() {
@@ -303,6 +397,9 @@ export function ConsensusArena() {
   const [selectedModels, setSelectedModels] = useState<ModelId[]>(['claude', 'gpt4', 'gemini']);
   const [apiKeys, setApiKeys] = useState<Partial<Record<ModelId, string>>>({});
   const [showApiKeys, setShowApiKeys] = useState(false);
+
+  // Cost tracking — persists across all runs since page load
+  const [sessionUsage, setSessionUsage] = useState<Partial<Record<ModelId, UsageTotals>>>({});
 
   // Session
   const [phase, setPhase] = useState<SessionPhase>('config');
@@ -359,6 +456,19 @@ export function ConsensusArena() {
           ...prev,
           { model: event.model, modelName: event.modelName, text: event.text, debateRound: event.debateRound },
         ]);
+        break;
+      case 'token_usage':
+        setSessionUsage((prev) => {
+          const existing = prev[event.model] ?? { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+          return {
+            ...prev,
+            [event.model]: {
+              inputTokens: existing.inputTokens + event.inputTokens,
+              outputTokens: existing.outputTokens + event.outputTokens,
+              costUsd: existing.costUsd + event.costUsd,
+            },
+          };
+        });
         break;
       case 'consensus_complete':
         setConsensus(event.consensus);
@@ -433,6 +543,7 @@ export function ConsensusArena() {
   if (phase === 'config') {
     return (
       <div className="min-h-screen bg-white flex flex-col items-center justify-center px-4 py-16">
+        <CostTracker usage={sessionUsage} />
         <div className="text-center mb-10">
           <h1 className="text-4xl font-bold tracking-tight text-gray-900 mb-2">
             ECHO<span style={{ color: '#7C3AED' }}>N</span>SENSUS
@@ -549,6 +660,7 @@ export function ConsensusArena() {
 
   return (
     <div className="min-h-screen bg-white flex flex-col">
+      <CostTracker usage={sessionUsage} />
       {/* Top bar */}
       <div className="sticky top-0 z-20 bg-white/90 backdrop-blur-sm border-b border-gray-200 px-5 py-3 flex items-center gap-4">
         <span className="text-xs font-bold tracking-widest text-gray-300">ECHONSENSUS</span>
