@@ -6,22 +6,22 @@ import type { ModelConfig, ModelId } from './types';
 export const MODELS: Record<ModelId, ModelConfig> = {
   claude: {
     id: 'claude',
-    name: 'Claude',
+    name: 'Claude Haiku 3.5',
     provider: 'Anthropic',
     color: '#7C3AED',
-    description: 'Claude Haiku 4.5 by Anthropic',
+    description: 'claude-3-5-haiku-20241022 by Anthropic',
     envKey: 'ANTHROPIC_API_KEY',
-    inputCostPerM: 0.80,   // Haiku tier — anthropic.com/pricing
+    inputCostPerM: 0.80,   // Haiku 3.5 — anthropic.com/pricing
     outputCostPerM: 4.00,
   },
   gpt4: {
     id: 'gpt4',
-    name: 'GPT-4o',
+    name: 'GPT-5.4 Nano',
     provider: 'OpenAI',
     color: '#10B981',
-    description: 'GPT-5.4-nano by OpenAI',
+    description: 'gpt-5.4-nano by OpenAI',
     envKey: 'OPENAI_API_KEY',
-    inputCostPerM: 0.15,   // nano tier ~ gpt-4o-mini — platform.openai.com/pricing
+    inputCostPerM: 0.15,   // nano tier — platform.openai.com/pricing
     outputCostPerM: 0.60,
   },
   gemini: {

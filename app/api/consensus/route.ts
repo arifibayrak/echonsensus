@@ -21,7 +21,7 @@ function getModel(modelId: ModelId, apiKeys: Partial<Record<ModelId, string>>) {
   const key = apiKeys[modelId] ?? process.env[MODELS[modelId].envKey] ?? '';
   switch (modelId) {
     case 'claude':
-      return createAnthropic({ apiKey: key })('claude-haiku-4-5-20251001');
+      return createAnthropic({ apiKey: key })('claude-3-5-haiku-20241022');
     case 'gpt4':
       return createOpenAI({ apiKey: key })('gpt-5.4-nano');
     case 'gemini':
