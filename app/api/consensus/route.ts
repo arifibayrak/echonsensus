@@ -28,10 +28,15 @@ function getModel(modelId: ModelId, apiKeys: Partial<Record<ModelProvider, strin
   }
 }
 
-// Pick the best synthesizer from selected models (prefer Sonnet > Haiku > anything else)
+// Pick the best synthesizer from selected models (prefer newest/most capable first)
 function pickSynthesizer(models: ModelId[]): ModelId {
-  if (models.includes('claude-sonnet')) return 'claude-sonnet';
-  if (models.includes('claude-haiku'))  return 'claude-haiku';
+  const preference: ModelId[] = [
+    'claude-sonnet-4', 'claude-sonnet', 'claude-haiku-4', 'claude-haiku',
+    'gpt-4o', 'o4-mini', 'gemini-25-pro', 'gemini-25-flash',
+  ];
+  for (const id of preference) {
+    if (models.includes(id)) return id;
+  }
   return models[0];
 }
 

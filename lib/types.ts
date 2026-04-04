@@ -1,21 +1,33 @@
 export type ModelProvider = 'anthropic' | 'openai' | 'google' | 'mistral';
 
 export type ModelId =
+  // Anthropic
   | 'claude-haiku'
+  | 'claude-haiku-4'
   | 'claude-sonnet'
+  | 'claude-sonnet-4'
+  // OpenAI
   | 'gpt-nano'
   | 'gpt-mini'
+  | 'gpt-4o'
+  | 'o4-mini'
+  // Google
   | 'gemini-lite'
   | 'gemini-flash'
+  | 'gemini-25-flash'
+  | 'gemini-25-pro'
+  // Mistral
+  | 'mistral-nemo'
   | 'mistral-small'
-  | 'mistral-nemo';
+  | 'mistral-saba'
+  | 'mistral-medium';
 
 export interface ModelConfig {
   id: ModelId;
   name: string;
-  provider: string;          // display name e.g. "Anthropic"
-  providerKey: ModelProvider; // for API routing
-  apiSlug: string;           // actual model identifier sent to the API
+  provider: string;
+  providerKey: ModelProvider;
+  apiSlug: string;
   color: string;
   envKey: string;
   inputCostPerM: number;
