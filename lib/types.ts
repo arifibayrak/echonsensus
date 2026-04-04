@@ -17,7 +17,6 @@ export type ModelId =
   | 'gemini-25-flash'
   | 'gemini-25-pro'
   // Mistral
-  | 'mistral-nemo'
   | 'mistral-small'
   | 'mistral-saba'
   | 'mistral-medium';

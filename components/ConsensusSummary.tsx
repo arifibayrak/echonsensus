@@ -7,13 +7,23 @@ interface Section {
   body: string;
 }
 
+// Pre-clean: strip --- separators and NOTE: prefixes, trim excess whitespace
+function preClean(raw: string): string {
+  return raw
+    .replace(/^---+\s*$/gm, '')           // remove --- lines
+    .replace(/^NOTE:\s*/gim, '')          // remove NOTE: prefix
+    .replace(/\n{3,}/g, '\n\n')           // collapse 3+ newlines
+    .trim();
+}
+
 // Split on **Heading** occurrences anywhere in the text (inline or on its own line)
 function parseSections(raw: string): Section[] {
+  const cleaned = preClean(raw);
   // parts alternates: [before, heading1, after1, heading2, after2, ...]
-  const parts = raw.split(/\*\*([A-Za-z][^*\n]{2,60})\*\*/);
+  const parts = cleaned.split(/\*\*([A-Za-z][^*\n]{2,60})\*\*/);
 
   if (parts.length <= 1) {
-    return [{ heading: '', body: raw.trim() }];
+    return [{ heading: '', body: cleaned.trim() }];
   }
 
   const sections: Section[] = [];
@@ -36,19 +46,30 @@ function splitBullets(text: string): string[] {
     .filter(Boolean);
 }
 
-// Render inline **bold** as <strong>
+// Render inline **bold** and *italic* markers
 function renderInline(text: string): React.ReactNode {
-  const parts = text.split(/\*\*([^*]+)\*\*/);
-  if (parts.length === 1) return text;
+  // Split on **bold** first, then handle *italic* within plain segments
+  const boldParts = text.split(/\*\*([^*]+)\*\*/);
+  if (boldParts.length === 1) {
+    // No bold — check for italic
+    const italicParts = text.split(/\*([^*]+)\*/);
+    if (italicParts.length === 1) return text;
+    return (
+      <>
+        {italicParts.map((p, i) =>
+          i % 2 === 1 ? <em key={i} className="italic">{p}</em> : p
+        )}
+      </>
+    );
+  }
   return (
     <>
-      {parts.map((p, i) =>
+      {boldParts.map((p, i) =>
         i % 2 === 1 ? (
-          <strong key={i} className="font-semibold text-gray-900">
-            {p}
-          </strong>
+          <strong key={i} className="font-semibold text-gray-900">{p}</strong>
         ) : (
-          p
+          // Also handle *italic* within non-bold segments
+          renderInline(p) as React.ReactElement
         )
       )}
     </>

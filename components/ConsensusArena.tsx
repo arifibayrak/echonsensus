@@ -42,6 +42,34 @@ function fmtTok(n: number) {
   return `${n}`;
 }
 
+// ─── Inline markdown renderer (strips/renders **bold** and *italic*) ──────────
+
+function renderMd(text: string): React.ReactNode {
+  const boldParts = text.split(/\*\*([^*]+)\*\*/);
+  if (boldParts.length === 1) {
+    const italicParts = text.split(/\*([^*]+)\*/);
+    if (italicParts.length === 1) return text;
+    return (
+      <>
+        {italicParts.map((p, i) =>
+          i % 2 === 1 ? <em key={i} className="italic">{p}</em> : p
+        )}
+      </>
+    );
+  }
+  return (
+    <>
+      {boldParts.map((p, i) =>
+        i % 2 === 1 ? (
+          <strong key={i} className="font-semibold">{p}</strong>
+        ) : (
+          renderMd(p) as React.ReactElement
+        )
+      )}
+    </>
+  );
+}
+
 // ─── Small display helpers ────────────────────────────────────────────────────
 
 function PhaseHeader({ label }: { label: string }) {
@@ -148,7 +176,7 @@ function CritiqueGrid({
                       {critique.isDisagreement ? '✗' : '✓'}
                     </span>
                   </div>
-                  <p className="text-xs text-gray-700 leading-relaxed">{critique.text}</p>
+                  <p className="text-xs text-gray-700 leading-relaxed">{renderMd(critique.text)}</p>
                 </div>
               );
             })}
@@ -170,7 +198,7 @@ function DebateBubble({ entry }: { entry: DebateMsgEntry }) {
       </div>
       <div className="flex-1 min-w-0">
         <span className="text-xs font-bold mr-2" style={{ color: model.color }}>{model.name}</span>
-        <span className="text-sm text-gray-800 leading-relaxed">{entry.text}</span>
+        <span className="text-sm text-gray-800 leading-relaxed">{renderMd(entry.text)}</span>
       </div>
     </div>
   );

@@ -31,7 +31,7 @@ export function buildCritiquePrompt(
 
 ${positions}
 
-For each model, write exactly 2 sentences. Start with "AGREE:" or "DISAGREE:" and explain specifically why.
+For each model, write exactly 2 sentences. Start with "AGREE:" or "DISAGREE:" (plain text — do NOT add asterisks or markdown) and explain specifically why.
 
 Use this exact format:
 ${format}`;
@@ -136,6 +136,8 @@ STRICT RULES — violating any of these makes the output useless:
 3. Only state what the models ACTUALLY said. Do not invent, speculate, or add information not present above.
 4. If models disagreed and did NOT resolve it, state clearly what each side argued — do not pretend they agreed.
 5. Use plain, precise language. One meaning per sentence.
+6. Do NOT output "---" separators, "NOTE:" prefixes, or any other text outside the four sections below.
+7. Do NOT use markdown bold (**) inside section bodies — only use it for the four section headings themselves.
 
 Write using EXACTLY this structure:
 

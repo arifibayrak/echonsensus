@@ -79,8 +79,8 @@ function parseCritiques(
       const critiqueText = match[1].trim();
       if (!critiqueText) return null;
 
-      const isDisagreement = /^DISAGREE/i.test(critiqueText);
-      const cleanText = critiqueText.replace(/^(AGREE|DISAGREE)\s*:\s*/i, '').trim();
+      const isDisagreement = /^\*{0,2}DISAGREE/i.test(critiqueText);
+      const cleanText = critiqueText.replace(/^\*{0,2}(AGREE|DISAGREE)\*{0,2}\s*:\s*/i, '').trim();
       return { other, isDisagreement, cleanText };
     })
     .filter(Boolean) as Array<{

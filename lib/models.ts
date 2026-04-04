@@ -143,17 +143,6 @@ export const MODELS: Record<ModelId, ModelConfig> = {
   },
 
   // ── Mistral — no Large ─────────────────────────────────────────────────────
-  'mistral-nemo': {
-    id: 'mistral-nemo',
-    name: 'Ministral 3B',
-    provider: 'Mistral AI',
-    providerKey: 'mistral',
-    apiSlug: 'ministral-3b-latest',            // open-mistral-nemo not in current SDK types
-    color: '#F97316',
-    envKey: 'MISTRAL_API_KEY',
-    inputCostPerM: 0.04,
-    outputCostPerM: 0.04,
-  },
   'mistral-small': {
     id: 'mistral-small',
     name: 'Mistral Small',
