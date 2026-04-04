@@ -99,14 +99,14 @@ export const MODELS: Record<ModelId, ModelConfig> = {
   // ── Google — no Ultra ──────────────────────────────────────────────────────
   'gemini-lite': {
     id: 'gemini-lite',
-    name: 'Gemini 2.0 Flash Lite',
+    name: 'Gemini 2.0 Flash',
     provider: 'Google',
     providerKey: 'google',
-    apiSlug: 'gemini-2.0-flash-lite',          // gemini-3.1-flash-lite-preview not in SDK types
+    apiSlug: 'gemini-2.0-flash',               // 2.0-flash-lite discontinued for new users
     color: '#3B82F6',
     envKey: 'GOOGLE_GENERATIVE_AI_API_KEY',
-    inputCostPerM: 0.075,
-    outputCostPerM: 0.30,
+    inputCostPerM: 0.10,
+    outputCostPerM: 0.40,
   },
   'gemini-flash': {
     id: 'gemini-flash',
