@@ -16,40 +16,6 @@ export const MODELS: Record<ModelId, ModelConfig> = {
     inputCostPerM: 0.80,
     outputCostPerM: 4.00,
   },
-  'claude-haiku-4': {
-    id: 'claude-haiku-4',
-    name: 'Claude Haiku 4.5',
-    provider: 'Anthropic',
-    providerKey: 'anthropic',
-    apiSlug: 'claude-haiku-4-5',               // stable alias
-    color: '#7C3AED',
-    envKey: 'ANTHROPIC_API_KEY',
-    inputCostPerM: 0.80,
-    outputCostPerM: 4.00,
-  },
-  'claude-sonnet': {
-    id: 'claude-sonnet',
-    name: 'Claude Sonnet 3.7',
-    provider: 'Anthropic',
-    providerKey: 'anthropic',
-    apiSlug: 'claude-3-7-sonnet-latest',       // 3-5-sonnet no longer listed in SDK
-    color: '#6D28D9',
-    envKey: 'ANTHROPIC_API_KEY',
-    inputCostPerM: 3.00,
-    outputCostPerM: 15.00,
-  },
-  'claude-sonnet-4': {
-    id: 'claude-sonnet-4',
-    name: 'Claude Sonnet 4.6',
-    provider: 'Anthropic',
-    providerKey: 'anthropic',
-    apiSlug: 'claude-sonnet-4-6',              // latest Sonnet as of SDK 2.0.x
-    color: '#6D28D9',
-    envKey: 'ANTHROPIC_API_KEY',
-    inputCostPerM: 3.00,
-    outputCostPerM: 15.00,
-  },
-
   // ── OpenAI — no o1/o3/GPT-4-turbo ─────────────────────────────────────────
   'gpt-nano': {
     id: 'gpt-nano',

@@ -3,9 +3,6 @@ export type ModelProvider = 'anthropic' | 'openai' | 'google' | 'mistral';
 export type ModelId =
   // Anthropic
   | 'claude-haiku'
-  | 'claude-haiku-4'
-  | 'claude-sonnet'
-  | 'claude-sonnet-4'
   // OpenAI
   | 'gpt-nano'
   | 'gpt-mini'
