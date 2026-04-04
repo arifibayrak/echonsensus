@@ -96,13 +96,13 @@ export const MODELS: Record<ModelId, ModelConfig> = {
     outputCostPerM: 4.40,
   },
 
-  // ── Google — no Ultra ──────────────────────────────────────────────────────
+  // ── Google ─────────────────────────────────────────────────────────────────
   'gemini-lite': {
     id: 'gemini-lite',
     name: 'Gemini 2.0 Flash',
     provider: 'Google',
     providerKey: 'google',
-    apiSlug: 'gemini-2.0-flash',               // 2.0-flash-lite discontinued for new users
+    apiSlug: 'gemini-2.0-flash-001',           // versioned slug avoids deprecation of unversioned alias
     color: '#3B82F6',
     envKey: 'GOOGLE_GENERATIVE_AI_API_KEY',
     inputCostPerM: 0.10,
@@ -110,10 +110,10 @@ export const MODELS: Record<ModelId, ModelConfig> = {
   },
   'gemini-flash': {
     id: 'gemini-flash',
-    name: 'Gemini 2.5 Flash Lite',
+    name: 'Gemini 3.1 Flash',
     provider: 'Google',
     providerKey: 'google',
-    apiSlug: 'gemini-2.5-flash-lite',
+    apiSlug: 'gemini-3.1-flash-image-preview', // no lite variant; 3.1 flash preview
     color: '#3B82F6',
     envKey: 'GOOGLE_GENERATIVE_AI_API_KEY',
     inputCostPerM: 0.10,
@@ -132,14 +132,14 @@ export const MODELS: Record<ModelId, ModelConfig> = {
   },
   'gemini-25-pro': {
     id: 'gemini-25-pro',
-    name: 'Gemini 2.5 Pro',
+    name: 'Gemini 2.5 Flash Lite',
     provider: 'Google',
     providerKey: 'google',
-    apiSlug: 'gemini-2.5-pro',
+    apiSlug: 'gemini-2.5-flash-lite',          // 2.0 flash lite deprecated; 2.5 lite is current
     color: '#1D4ED8',
     envKey: 'GOOGLE_GENERATIVE_AI_API_KEY',
-    inputCostPerM: 1.25,
-    outputCostPerM: 10.00,
+    inputCostPerM: 0.10,
+    outputCostPerM: 0.40,
   },
 
   // ── Mistral — no Large ─────────────────────────────────────────────────────
