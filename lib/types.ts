@@ -1,20 +1,28 @@
-export type ModelId = 'claude' | 'gpt4' | 'gemini' | 'mistral';
+export type ModelProvider = 'anthropic' | 'openai' | 'google' | 'mistral';
+
+export type ModelId =
+  | 'claude-haiku'
+  | 'claude-sonnet'
+  | 'gpt-nano'
+  | 'gpt-mini'
+  | 'gemini-lite'
+  | 'gemini-flash'
+  | 'mistral-small'
+  | 'mistral-nemo';
 
 export interface ModelConfig {
   id: ModelId;
   name: string;
-  provider: string;
+  provider: string;          // display name e.g. "Anthropic"
+  providerKey: ModelProvider; // for API routing
+  apiSlug: string;           // actual model identifier sent to the API
   color: string;
-  description: string;
   envKey: string;
-  /** Cost per 1 million input tokens in USD */
   inputCostPerM: number;
-  /** Cost per 1 million output tokens in USD */
   outputCostPerM: number;
 }
 
 export type DebatePhase = 'positions' | 'critiques' | 'debate' | 'synthesis';
-
 export type SessionPhase = 'config' | 'running' | 'complete';
 
 export type SSEEvent =
@@ -31,5 +39,5 @@ export type SSEEvent =
 export interface ConsensusRequest {
   topic: string;
   models: ModelId[];
-  apiKeys: Partial<Record<ModelId, string>>;
+  apiKeys: Partial<Record<ModelProvider, string>>;
 }

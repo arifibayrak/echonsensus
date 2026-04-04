@@ -4,7 +4,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createMistral } from '@ai-sdk/mistral';
-import type { ConsensusRequest, ModelId, SSEEvent } from '@/lib/types';
+import type { ConsensusRequest, ModelId, ModelProvider, SSEEvent } from '@/lib/types';
 import { MODELS, calcCost } from '@/lib/models';
 import {
   buildPositionPrompt,
@@ -17,18 +17,22 @@ import {
 
 const MAX_DEBATE_ROUNDS = 5;
 
-function getModel(modelId: ModelId, apiKeys: Partial<Record<ModelId, string>>) {
-  const key = apiKeys[modelId] ?? process.env[MODELS[modelId].envKey] ?? '';
-  switch (modelId) {
-    case 'claude':
-      return createAnthropic({ apiKey: key })('claude-3-5-haiku-20241022');
-    case 'gpt4':
-      return createOpenAI({ apiKey: key })('gpt-5.4-nano');
-    case 'gemini':
-      return createGoogleGenerativeAI({ apiKey: key })('gemini-3.1-flash-lite-preview');
-    case 'mistral':
-      return createMistral({ apiKey: key })('mistral-small');
+function getModel(modelId: ModelId, apiKeys: Partial<Record<ModelProvider, string>>) {
+  const config = MODELS[modelId];
+  const key = apiKeys[config.providerKey] ?? process.env[config.envKey] ?? '';
+  switch (config.providerKey) {
+    case 'anthropic': return createAnthropic({ apiKey: key })(config.apiSlug);
+    case 'openai':    return createOpenAI({ apiKey: key })(config.apiSlug);
+    case 'google':    return createGoogleGenerativeAI({ apiKey: key })(config.apiSlug);
+    case 'mistral':   return createMistral({ apiKey: key })(config.apiSlug);
   }
+}
+
+// Pick the best synthesizer from selected models (prefer Sonnet > Haiku > anything else)
+function pickSynthesizer(models: ModelId[]): ModelId {
+  if (models.includes('claude-sonnet')) return 'claude-sonnet';
+  if (models.includes('claude-haiku'))  return 'claude-haiku';
+  return models[0];
 }
 
 const enc = new TextEncoder();
@@ -44,10 +48,9 @@ async function tracked(
   params: Parameters<typeof generateText>[0]
 ): Promise<string> {
   const result = await generateText(params);
-  const input = result.usage?.inputTokens ?? 0;
+  const input  = result.usage?.inputTokens  ?? 0;
   const output = result.usage?.outputTokens ?? 0;
-  const costUsd = calcCost(modelId, input, output);
-  send({ type: 'token_usage', model: modelId, phase, inputTokens: input, outputTokens: output, costUsd });
+  send({ type: 'token_usage', model: modelId, phase, inputTokens: input, outputTokens: output, costUsd: calcCost(modelId, input, output) });
   return result.text;
 }
 
@@ -61,7 +64,7 @@ function parseCritiques(
     .filter((m) => m.modelId !== fromModel)
     .map((other) => {
       const escaped = other.modelName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = new RegExp(
+      const regex   = new RegExp(
         `(?:^|\\n)On\\s+${escaped}\\s*:\\s*([\\s\\S]*?)(?=\\n\\nOn\\s+|\\nOn\\s+|$)`,
         'i'
       );
@@ -76,10 +79,10 @@ function parseCritiques(
       return { other, isDisagreement, cleanText };
     })
     .filter(Boolean) as Array<{
-    other: { modelId: ModelId; modelName: string };
-    isDisagreement: boolean;
-    cleanText: string;
-  }>;
+      other: { modelId: ModelId; modelName: string };
+      isDisagreement: boolean;
+      cleanText: string;
+    }>;
 }
 
 export async function POST(req: NextRequest) {
@@ -104,7 +107,7 @@ export async function POST(req: NextRequest) {
                 maxOutputTokens: 450,
               });
               const summaryMatch = text.match(/SUMMARY:\s*([\s\S]+)/i);
-              const summary = summaryMatch ? summaryMatch[1].trim() : text.slice(0, 300);
+              const summary  = summaryMatch ? summaryMatch[1].trim() : text.slice(0, 300);
               const fullText = text.replace(/\n*SUMMARY:[\s\S]*/i, '').trim();
               send({ type: 'position_complete', model: modelId, modelName: MODELS[modelId].name, summary, fullText });
               return { modelId, modelName: MODELS[modelId].name, summary, fullText };
@@ -132,11 +135,7 @@ export async function POST(req: NextRequest) {
             try {
               const text = await tracked(send, modelId, 'critiques', {
                 model: getModel(modelId, apiKeys),
-                prompt: buildCritiquePrompt(
-                  modelId,
-                  topic,
-                  others.map((o) => ({ modelName: o.modelName, summary: o.summary }))
-                ),
+                prompt: buildCritiquePrompt(modelId, topic, others.map((o) => ({ modelName: o.modelName, summary: o.summary }))),
                 maxOutputTokens: 300,
               });
               allCritiqueTexts.push(`${MODELS[modelId].name}:\n${text}`);
@@ -154,18 +153,16 @@ export async function POST(req: NextRequest) {
                   isDisagreement: item.isDisagreement,
                 });
               }
-            } catch {
-              // skip failed critique
-            }
+            } catch { /* skip */ }
           })
         );
 
-        // ── Disagreement detection ────────────────────────────────────
+        // ── Disagreement detection + Debate ──────────────────────────
         type DebateMsgEntry = { modelId: ModelId; modelName: string; text: string; debateRound: number };
         const debateMessages: DebateMsgEntry[] = [];
 
         if (hasDisagreement) {
-          const synthesizerId: ModelId = models.includes('claude') ? 'claude' : models[0];
+          const synthesizerId = pickSynthesizer(models);
           let disagreementDescription = 'The models have different views.';
           try {
             const text = await tracked(send, synthesizerId, 'disagreement', {
@@ -174,12 +171,9 @@ export async function POST(req: NextRequest) {
               maxOutputTokens: 80,
             });
             disagreementDescription = text.trim();
-          } catch {
-            /* use default */
-          }
-          send({ type: 'disagreement_detected', description: disagreementDescription });
+          } catch { /* use default */ }
 
-          // ── Phase 3: Debate ─────────────────────────────────────────
+          send({ type: 'disagreement_detected', description: disagreementDescription });
           send({ type: 'phase_change', phase: 'debate' });
 
           for (let round = 1; round <= MAX_DEBATE_ROUNDS; round++) {
@@ -201,12 +195,13 @@ export async function POST(req: NextRequest) {
               })
             );
 
-            const roundMsgs = roundResults
-              .filter((r): r is PromiseFulfilledResult<DebateMsgEntry> => r.status === 'fulfilled')
-              .map((r) => r.value);
-            debateMessages.push(...roundMsgs);
+            debateMessages.push(
+              ...roundResults
+                .filter((r): r is PromiseFulfilledResult<DebateMsgEntry> => r.status === 'fulfilled')
+                .map((r) => r.value)
+            );
 
-            // Check if consensus reached after every round (including round 1)
+            // Consensus check after every round
             try {
               const allHistory = debateMessages
                 .map((m) => `${m.modelName} (round ${m.debateRound}): ${m.text}`)
@@ -217,15 +212,13 @@ export async function POST(req: NextRequest) {
                 maxOutputTokens: 10,
               });
               if (text.trim().toUpperCase().startsWith('YES')) break;
-            } catch {
-              /* continue */
-            }
+            } catch { /* continue */ }
           }
         }
 
         // ── Phase 4: Final Synthesis ──────────────────────────────────
         send({ type: 'phase_change', phase: 'synthesis' });
-        const synthesizerId: ModelId = models.includes('claude') ? 'claude' : models[0];
+        const synthesizerId = pickSynthesizer(models);
         try {
           const text = await tracked(send, synthesizerId, 'synthesis', {
             model: getModel(synthesizerId, apiKeys),
