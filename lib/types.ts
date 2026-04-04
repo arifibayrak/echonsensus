@@ -12,7 +12,6 @@ export type ModelId =
   | 'gpt-4o'
   | 'o4-mini'
   // Google
-  | 'gemini-lite'
   | 'gemini-flash'
   | 'gemini-25-flash'
   | 'gemini-25-pro'

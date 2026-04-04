@@ -393,7 +393,7 @@ function CostTracker({ usage }: { usage: Partial<Record<ModelId, UsageTotals>> }
 export function ConsensusArena() {
   // Config
   const [topic, setTopic]               = useState('');
-  const [selectedModels, setSelectedModels] = useState<ModelId[]>(['claude-haiku', 'gpt-nano', 'gemini-lite']);
+  const [selectedModels, setSelectedModels] = useState<ModelId[]>(['claude-haiku', 'gpt-nano', 'gemini-flash']);
   const [apiKeys, setApiKeys]           = useState<Partial<Record<ModelProvider, string>>>({});
   const [showApiKeys, setShowApiKeys]   = useState(false);
 

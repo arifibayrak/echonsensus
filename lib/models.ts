@@ -97,17 +97,6 @@ export const MODELS: Record<ModelId, ModelConfig> = {
   },
 
   // ── Google ─────────────────────────────────────────────────────────────────
-  'gemini-lite': {
-    id: 'gemini-lite',
-    name: 'Gemini 2.0 Flash',
-    provider: 'Google',
-    providerKey: 'google',
-    apiSlug: 'gemini-2.0-flash-001',           // versioned slug avoids deprecation of unversioned alias
-    color: '#3B82F6',
-    envKey: 'GOOGLE_GENERATIVE_AI_API_KEY',
-    inputCostPerM: 0.10,
-    outputCostPerM: 0.40,
-  },
   'gemini-flash': {
     id: 'gemini-flash',
     name: 'Gemini 3.1 Flash',
