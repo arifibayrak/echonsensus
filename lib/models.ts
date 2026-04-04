@@ -7,10 +7,10 @@ export const MODELS: Record<ModelId, ModelConfig> = {
   // ── Anthropic — no Opus ────────────────────────────────────────────────────
   'claude-haiku': {
     id: 'claude-haiku',
-    name: 'Claude Haiku 3.5',
+    name: 'Claude Haiku 4.5',
     provider: 'Anthropic',
     providerKey: 'anthropic',
-    apiSlug: 'claude-3-5-haiku-20241022',       // latest alias broken in API
+    apiSlug: 'claude-haiku-4-5',
     color: '#7C3AED',
     envKey: 'ANTHROPIC_API_KEY',
     inputCostPerM: 0.80,
