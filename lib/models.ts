@@ -10,7 +10,7 @@ export const MODELS: Record<ModelId, ModelConfig> = {
     name: 'Claude Haiku 3.5',
     provider: 'Anthropic',
     providerKey: 'anthropic',
-    apiSlug: 'claude-3-5-haiku-latest',        // stable alias
+    apiSlug: 'claude-3-5-haiku-20241022',       // latest alias broken in API
     color: '#7C3AED',
     envKey: 'ANTHROPIC_API_KEY',
     inputCostPerM: 0.80,
