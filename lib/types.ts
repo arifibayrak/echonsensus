@@ -37,7 +37,7 @@ export interface EchoAnalysis {
   debatableTopics: string[];
   attributes: string[];
   refinedPrompt: string;
-  followUpQuestions: string[];
+  followUpQuestions?: string[];
 }
 
 // ─── Component-level data shapes (shared across arena sub-components) ─────────

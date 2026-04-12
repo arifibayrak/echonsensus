@@ -11,7 +11,7 @@ Your task:
 2. Identify the genuinely debatable aspects — the real questions worth arguing about.
 3. Detect any user-specified constraints, attributes, or limitations (e.g. "for a startup", "in 2025", "on a budget").
 4. Write a refined, precise debate prompt suitable for a multi-model AI debate. Make it specific and arguable.
-5. Generate 1–3 short clarifying questions that, if answered, would make the debate more focused and useful.
+5. Conditionally generate 0–2 clarifying follow-up questions — see rules below.
 
 Return ONLY valid JSON with exactly this shape — no markdown, no code fences, no explanation:
 {
@@ -27,7 +27,7 @@ Rules:
 - debatableTopics: list 2–5 specific, arguable sub-questions or positions. Must not be empty.
 - attributes: list 0–3 constraints or scope limiters. Can be empty [].
 - refinedPrompt: a single sentence or question that captures the core debate topic clearly.
-- followUpQuestions: 1–3 clarifying questions. Never more than 3.`;
+- followUpQuestions: Generate 1–2 questions ONLY if there is a genuine conceptual or objective ambiguity that would make the debate meaningless without clarification (e.g., the user says "cheap" but the topic involves both time-cost and money-cost tradeoffs, or "best" with no success criteria). If the prompt is clear enough to debate as-is, return an empty array []. Never ask preference questions. Never ask "did you mean X or Y" when the answer is obvious from context. Default to [].`;
 }
 
 export function buildPositionPrompt(modelId: ModelId, topic: string, echoAnalysis?: EchoAnalysis): string {
