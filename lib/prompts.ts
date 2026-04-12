@@ -1,10 +1,48 @@
-import type { ModelId } from './types';
+import type { EchoAnalysis, ModelId } from './types';
 import { MODELS } from './models';
 
-export function buildPositionPrompt(modelId: ModelId, topic: string): string {
+export function buildEchoAnalysisPrompt(topic: string): string {
+  return `You are an expert debate facilitator. Analyze this user input and return a JSON object.
+
+User input: "${topic}"
+
+Your task:
+1. Extract factual, non-debatable claims present in the input (things that are established facts, not opinions).
+2. Identify the genuinely debatable aspects — the real questions worth arguing about.
+3. Detect any user-specified constraints, attributes, or limitations (e.g. "for a startup", "in 2025", "on a budget").
+4. Write a refined, precise debate prompt suitable for a multi-model AI debate. Make it specific and arguable.
+5. Generate 1–3 short clarifying questions that, if answered, would make the debate more focused and useful.
+
+Return ONLY valid JSON with exactly this shape — no markdown, no code fences, no explanation:
+{
+  "facts": ["string", ...],
+  "debatableTopics": ["string", ...],
+  "attributes": ["string", ...],
+  "refinedPrompt": "string",
+  "followUpQuestions": ["string", ...]
+}
+
+Rules:
+- facts: list 0–4 non-controversial statements extracted from the input. Can be empty [].
+- debatableTopics: list 2–5 specific, arguable sub-questions or positions. Must not be empty.
+- attributes: list 0–3 constraints or scope limiters. Can be empty [].
+- refinedPrompt: a single sentence or question that captures the core debate topic clearly.
+- followUpQuestions: 1–3 clarifying questions. Never more than 3.`;
+}
+
+export function buildPositionPrompt(modelId: ModelId, topic: string, echoAnalysis?: EchoAnalysis): string {
+  const debateTopic = echoAnalysis?.refinedPrompt ?? topic;
+
+  const echoContext = echoAnalysis
+    ? `\n\nDebate context:
+- Established facts (do not dispute these): ${echoAnalysis.facts.length > 0 ? echoAnalysis.facts.join('; ') : 'none'}.
+- Focus your argument on these debatable points: ${echoAnalysis.debatableTopics.join(', ')}.
+- User constraints to respect: ${echoAnalysis.attributes.length > 0 ? echoAnalysis.attributes.join(', ') : 'none specified'}.`
+    : '';
+
   return `You are ${MODELS[modelId].name} by ${MODELS[modelId].provider}, participating in a multi-AI consensus debate.
 
-Topic: "${topic}"
+Topic: "${debateTopic}"${echoContext}
 
 Write your full position on this topic (150–200 words). Be analytical, specific, and clear.
 
@@ -47,13 +85,12 @@ export function buildDebatePrompt(
     ? chatHistory.map((m) => `  ${m.modelName}: ${m.text}`).join('\n')
     : '  (No messages yet — you go first.)';
 
-  // Find the last message from each OTHER model so this model knows what to respond to
   const myName = MODELS[modelId].name;
   const otherLastMessages = Object.values(
     chatHistory
       .filter((m) => m.modelName !== myName)
       .reduce<Record<string, { modelName: string; text: string }>>((acc, m) => {
-        acc[m.modelName] = m; // keep latest per model
+        acc[m.modelName] = m;
         return acc;
       }, {})
   );

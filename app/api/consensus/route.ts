@@ -4,9 +4,10 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createMistral } from '@ai-sdk/mistral';
-import type { ConsensusRequest, ModelId, ModelProvider, SSEEvent } from '@/lib/types';
+import type { ConsensusRequest, EchoAnalysis, ModelId, ModelProvider, SSEEvent } from '@/lib/types';
 import { MODELS, calcCost } from '@/lib/models';
 import {
+  buildEchoAnalysisPrompt,
   buildPositionPrompt,
   buildCritiquePrompt,
   buildDebatePrompt,
@@ -89,16 +90,63 @@ function parseCritiques(
     }>;
 }
 
+// Parse the echo analysis JSON response — strips code fences, falls back to regex extraction
+function parseEchoJson(text: string): EchoAnalysis {
+  const cleaned = text
+    .replace(/```(?:json)?\s*/gi, '')
+    .replace(/```/g, '')
+    .trim();
+
+  try {
+    return JSON.parse(cleaned) as EchoAnalysis;
+  } catch {
+    // Try to extract the first JSON object via regex
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (match) {
+      try {
+        return JSON.parse(match[0]) as EchoAnalysis;
+      } catch { /* fall through */ }
+    }
+    // Last-resort minimal structure so the UI can still proceed
+    return {
+      facts: [],
+      debatableTopics: [cleaned.slice(0, 200)],
+      attributes: [],
+      refinedPrompt: cleaned.slice(0, 500),
+      followUpQuestions: [],
+    };
+  }
+}
+
 export async function POST(req: NextRequest) {
   const body = (await req.json()) as ConsensusRequest;
-  const { topic, models, apiKeys } = body;
+  const { topic, models, apiKeys, echoAnalysis } = body;
 
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: SSEEvent) => controller.enqueue(encode(event));
 
       try {
-        // ── Phase 1: Initial Positions ────────────────────────────────
+        // ── Echo-only phase (first POST — no echoAnalysis in body) ────────────
+        if (!echoAnalysis) {
+          send({ type: 'phase_change', phase: 'echo' });
+
+          const echoModelId = pickSynthesizer(models);
+          const text = await tracked(send, echoModelId, 'echo', {
+            model: getModel(echoModelId, apiKeys),
+            prompt: buildEchoAnalysisPrompt(topic),
+            maxOutputTokens: 600,
+          });
+
+          const analysis = parseEchoJson(text);
+          send({ type: 'echo_analysis', analysis });
+          send({ type: 'done' });
+          return;
+        }
+
+        // ── Full debate (second POST — echoAnalysis confirmed by user) ────────
+
+        // Phase 1: Initial Positions
         send({ type: 'phase_change', phase: 'positions' });
 
         type PositionEntry = { modelId: ModelId; modelName: string; summary: string; fullText: string };
@@ -107,7 +155,7 @@ export async function POST(req: NextRequest) {
             try {
               const text = await tracked(send, modelId, 'positions', {
                 model: getModel(modelId, apiKeys),
-                prompt: buildPositionPrompt(modelId, topic),
+                prompt: buildPositionPrompt(modelId, topic, echoAnalysis),
                 maxOutputTokens: 450,
               });
               const summaryMatch = text.match(/SUMMARY:\s*([\s\S]+)/i);
@@ -127,7 +175,7 @@ export async function POST(req: NextRequest) {
           .filter((r): r is PromiseFulfilledResult<PositionEntry> => r.status === 'fulfilled')
           .map((r) => r.value);
 
-        // ── Phase 2: Cross-Critiques ──────────────────────────────────
+        // Phase 2: Cross-Critiques
         send({ type: 'phase_change', phase: 'critiques' });
 
         let hasDisagreement = false;
@@ -161,7 +209,7 @@ export async function POST(req: NextRequest) {
           })
         );
 
-        // ── Disagreement detection + Debate ──────────────────────────
+        // Phase 3: Disagreement detection + Debate
         type DebateMsgEntry = { modelId: ModelId; modelName: string; text: string; debateRound: number };
         const debateMessages: DebateMsgEntry[] = [];
 
@@ -220,14 +268,14 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // ── Phase 4: Final Synthesis ──────────────────────────────────
+        // Phase 4: Final Synthesis
         send({ type: 'phase_change', phase: 'synthesis' });
         const synthesizerId = pickSynthesizer(models);
         try {
           const text = await tracked(send, synthesizerId, 'synthesis', {
             model: getModel(synthesizerId, apiKeys),
             prompt: buildConsensusPrompt(
-              topic,
+              echoAnalysis.refinedPrompt || topic,
               positions.map((p) => ({ modelName: p.modelName, fullText: p.fullText || p.summary })),
               debateMessages.map((m) => ({ modelName: m.modelName, text: m.text }))
             ),

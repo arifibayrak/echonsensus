@@ -29,8 +29,41 @@ export interface ModelConfig {
   outputCostPerM: number;
 }
 
-export type DebatePhase = 'positions' | 'critiques' | 'debate' | 'synthesis';
-export type SessionPhase = 'config' | 'running' | 'complete';
+export type DebatePhase = 'echo' | 'positions' | 'critiques' | 'debate' | 'synthesis';
+export type SessionPhase = 'config' | 'echo_analyzing' | 'echo_confirm' | 'running' | 'complete';
+
+export interface EchoAnalysis {
+  facts: string[];
+  debatableTopics: string[];
+  attributes: string[];
+  refinedPrompt: string;
+  followUpQuestions: string[];
+}
+
+// ─── Component-level data shapes (shared across arena sub-components) ─────────
+
+export interface PositionEntry {
+  model: ModelId;
+  modelName: string;
+  summary: string;
+  fullText: string;
+}
+
+export interface CritiqueEntry {
+  fromModel: ModelId;
+  fromModelName: string;
+  aboutModel: ModelId;
+  aboutModelName: string;
+  text: string;
+  isDisagreement: boolean;
+}
+
+export interface DebateMsgEntry {
+  model: ModelId;
+  modelName: string;
+  text: string;
+  debateRound: number;
+}
 
 export type SSEEvent =
   | { type: 'phase_change'; phase: DebatePhase }
@@ -40,6 +73,7 @@ export type SSEEvent =
   | { type: 'debate_message'; model: ModelId; modelName: string; text: string; debateRound: number }
   | { type: 'token_usage'; model: ModelId; phase: string; inputTokens: number; outputTokens: number; costUsd: number }
   | { type: 'consensus_complete'; consensus: string }
+  | { type: 'echo_analysis'; analysis: EchoAnalysis }
   | { type: 'done' }
   | { type: 'error'; message: string };
 
@@ -47,4 +81,5 @@ export interface ConsensusRequest {
   topic: string;
   models: ModelId[];
   apiKeys: Partial<Record<ModelProvider, string>>;
+  echoAnalysis?: EchoAnalysis;
 }

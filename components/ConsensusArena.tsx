@@ -1,35 +1,32 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   ChevronDown, ChevronUp, Play, RotateCcw, Loader2,
   AlertCircle, AlertTriangle, CheckCircle2, Receipt,
-  Maximize2, Minimize2, X,
 } from 'lucide-react';
 import type {
-  ConsensusRequest, DebatePhase, ModelId, ModelProvider,
+  ConsensusRequest, CritiqueEntry, DebateMsgEntry, DebatePhase,
+  EchoAnalysis, ModelId, ModelProvider, PositionEntry,
   SessionPhase, SSEEvent,
 } from '@/lib/types';
-import { MODEL_LIST, MODELS, MODELS_BY_PROVIDER, PROVIDER_ORDER, calcCost } from '@/lib/models';
+import { MODEL_LIST, MODELS, MODELS_BY_PROVIDER, PROVIDER_ORDER } from '@/lib/models';
 import { ConsensusSummary } from './ConsensusSummary';
+import { EchoConfirmation } from './EchoConfirmation';
+import { PositionCards } from './PositionCards';
+import { CritiqueGrid } from './CritiqueGrid';
+import { DebateSection } from './DebateSection';
+import { ProgressStepper } from './ui/ProgressStepper';
 
-// ─── Sub-types ────────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const PHASE_ORDER: DebatePhase[] = ['echo', 'positions', 'critiques', 'debate', 'synthesis'];
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface UsageTotals { inputTokens: number; outputTokens: number; costUsd: number }
 
-interface PositionEntry {
-  model: ModelId; modelName: string; summary: string; fullText: string;
-}
-interface CritiqueEntry {
-  fromModel: ModelId; fromModelName: string;
-  aboutModel: ModelId; aboutModelName: string;
-  text: string; isDisagreement: boolean;
-}
-interface DebateMsgEntry {
-  model: ModelId; modelName: string; text: string; debateRound: number;
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helpers (kept in this file per spec) ────────────────────────────────────
 
 function fmt(usd: number) {
   if (usd === 0) return '$0.00';
@@ -42,8 +39,7 @@ function fmtTok(n: number) {
   return `${n}`;
 }
 
-// ─── Inline markdown renderer (strips/renders **bold** and *italic*) ──────────
-
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function renderMd(text: string): React.ReactNode {
   const boldParts = text.split(/\*\*([^*]+)\*\*/);
   if (boldParts.length === 1) {
@@ -70,18 +66,7 @@ function renderMd(text: string): React.ReactNode {
   );
 }
 
-// ─── Small display helpers ────────────────────────────────────────────────────
-
-function PhaseHeader({ label }: { label: string }) {
-  return (
-    <div className="flex items-center gap-3 my-6">
-      <div className="flex-1 h-px bg-gray-200" />
-      <span className="text-xs font-bold tracking-widest text-gray-400 uppercase px-2">{label}</span>
-      <div className="flex-1 h-px bg-gray-200" />
-    </div>
-  );
-}
-
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function ModelDot({ modelId, size = 8 }: { modelId: ModelId; size?: number }) {
   return (
     <span
@@ -91,259 +76,25 @@ function ModelDot({ modelId, size = 8 }: { modelId: ModelId; size?: number }) {
   );
 }
 
-// ─── Position card ────────────────────────────────────────────────────────────
-
-function PositionCard({ entry, pending }: { entry: PositionEntry | null; pending?: boolean }) {
-  const [expanded, setExpanded] = useState(false);
-  if (pending || !entry) {
-    return (
-      <div className="rounded-xl border border-gray-200 bg-white p-4 animate-pulse space-y-2">
-        <div className="h-3 bg-gray-100 rounded w-24" />
-        <div className="h-3 bg-gray-100 rounded w-full" />
-        <div className="h-3 bg-gray-100 rounded w-5/6" />
-      </div>
-    );
-  }
-  const model = MODELS[entry.model];
-  return (
-    <div
-      className="rounded-xl border bg-white p-4 transition-all"
-      style={{ borderColor: model.color + '45', borderLeftWidth: 3, borderLeftColor: model.color }}
-    >
-      <div className="flex items-center gap-2 mb-2">
-        <ModelDot modelId={entry.model} />
-        <span className="text-sm font-bold" style={{ color: model.color }}>{model.name}</span>
-        <span className="text-xs text-gray-400">{model.provider}</span>
-      </div>
-      <p className="text-sm text-gray-800 leading-relaxed">{entry.summary}</p>
-      {entry.fullText && (
-        <>
-          {expanded && (
-            <p className="text-sm text-gray-600 leading-relaxed mt-3 pt-3 border-t border-gray-100 whitespace-pre-line">
-              {entry.fullText}
-            </p>
-          )}
-          <button
-            onClick={() => setExpanded((v) => !v)}
-            className="mt-2 flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-            {expanded ? 'Hide full answer' : 'Show full answer'}
-          </button>
-        </>
-      )}
-    </div>
-  );
-}
-
-// ─── Critique grid ────────────────────────────────────────────────────────────
-
-function CritiqueGrid({
-  critiques, selectedModels, loading,
-}: { critiques: CritiqueEntry[]; selectedModels: ModelId[]; loading: boolean }) {
-  const n = selectedModels.length;
-  return (
-    <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))` }}>
-      {selectedModels.map((fromModel) => {
-        const fromCfg = MODELS[fromModel];
-        const targets = selectedModels.filter((m) => m !== fromModel);
-        return (
-          <div key={fromModel} className="flex flex-col gap-2">
-            <div className="flex items-center gap-1.5 pb-2 border-b" style={{ borderColor: fromCfg.color + '40' }}>
-              <ModelDot modelId={fromModel} />
-              <span className="text-xs font-bold truncate" style={{ color: fromCfg.color }}>{fromCfg.name}</span>
-            </div>
-            {targets.map((aboutModel) => {
-              const aboutCfg = MODELS[aboutModel];
-              const critique = critiques.find((c) => c.fromModel === fromModel && c.aboutModel === aboutModel);
-              if (!critique) {
-                return (
-                  <div key={aboutModel} className={`rounded-lg border border-gray-100 bg-white p-3 ${loading ? 'animate-pulse' : ''}`}>
-                    <div className="flex items-center gap-1 mb-2">
-                      <ModelDot modelId={aboutModel} size={6} />
-                      <span className="text-xs text-gray-400">{aboutCfg.name}</span>
-                    </div>
-                    {loading && <><div className="h-2 bg-gray-100 rounded w-full mb-1" /><div className="h-2 bg-gray-100 rounded w-4/5" /></>}
-                  </div>
-                );
-              }
-              return (
-                <div key={aboutModel} className="rounded-lg border bg-white p-3" style={{ borderColor: '#e5e7eb' }}>
-                  <div className="flex items-center gap-1 mb-1.5">
-                    <ModelDot modelId={aboutModel} size={6} />
-                    <span className="text-xs font-semibold" style={{ color: aboutCfg.color }}>{aboutCfg.name}</span>
-                    <span className={`ml-auto text-xs font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ${critique.isDisagreement ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'}`}>
-                      {critique.isDisagreement ? '✗' : '✓'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-700 leading-relaxed">{renderMd(critique.text)}</p>
-                </div>
-              );
-            })}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ─── Debate bubble ────────────────────────────────────────────────────────────
-
-function DebateBubble({ entry }: { entry: DebateMsgEntry }) {
-  const model = MODELS[entry.model];
-  return (
-    <div className="flex gap-3">
-      <div className="flex-shrink-0 mt-0.5">
-        <ModelDot modelId={entry.model} size={10} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <span className="text-xs font-bold mr-2" style={{ color: model.color }}>{model.name}</span>
-        <span className="text-sm text-gray-800 leading-relaxed">{renderMd(entry.text)}</span>
-      </div>
-    </div>
-  );
-}
-
-// ─── Debate section (collapsible + expandable modal) ──────────────────────────
-
-function DebateSection({
-  debateMessages, selectedModels, loading,
-}: { debateMessages: DebateMsgEntry[]; selectedModels: ModelId[]; loading: boolean }) {
-  const [open, setOpen]       = useState(false);
-  const [modal, setModal]     = useState(false);
-
-  const rounds       = [...new Set(debateMessages.map((m) => m.debateRound))].sort((a, b) => a - b);
-  const totalRounds  = rounds.length;
-  const totalMsgs    = debateMessages.length;
-
-  const chatContent = (
-    <div className="space-y-5">
-      {rounds.map((round) => {
-        const msgs = debateMessages.filter((m) => m.debateRound === round);
-        return (
-          <div key={round}>
-            <p className="text-xs font-bold text-gray-300 uppercase tracking-widest mb-3">Round {round}</p>
-            <div className="space-y-3">
-              {msgs.map((msg, i) => <DebateBubble key={i} entry={msg} />)}
-            </div>
-          </div>
-        );
-      })}
-      {loading && (
-        <div className="flex gap-3 animate-pulse">
-          <div className="w-2.5 h-2.5 rounded-full bg-gray-200 mt-0.5 flex-shrink-0" />
-          <div className="flex-1 space-y-1.5">
-            <div className="h-2.5 bg-gray-100 rounded w-full" />
-            <div className="h-2.5 bg-gray-100 rounded w-3/4" />
-          </div>
-        </div>
-      )}
-    </div>
-  );
-
-  return (
-    <>
-      <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
-        {/* Header bar */}
-        <div className="flex items-center gap-3 px-5 py-3">
-          <div className="flex -space-x-1 flex-shrink-0">
-            {selectedModels.map((m) => (
-              <span key={m} className="w-3 h-3 rounded-full ring-2 ring-white inline-block"
-                style={{ backgroundColor: MODELS[m].color }} />
-            ))}
-          </div>
-
-          <div className="flex-1 min-w-0">
-            <span className="text-sm font-semibold text-gray-800">
-              {loading && totalMsgs === 0
-                ? 'Debate starting…'
-                : `${totalRounds} round${totalRounds !== 1 ? 's' : ''} · ${totalMsgs} message${totalMsgs !== 1 ? 's' : ''}`}
-            </span>
-            {loading && (
-              <span className="ml-2 inline-flex items-center gap-1 text-xs text-violet-500">
-                <Loader2 size={11} className="animate-spin" /> live
-              </span>
-            )}
-          </div>
-
-          {/* Expand to modal */}
-          <button
-            onClick={() => { setModal(true); setOpen(true); }}
-            className="flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs text-gray-500 hover:text-gray-800 hover:border-gray-400 transition-all flex-shrink-0"
-            title="Open full view"
-          >
-            <Maximize2 size={11} />
-            <span className="hidden sm:inline">Expand</span>
-          </button>
-
-          {/* Inline toggle */}
-          <button
-            onClick={() => setOpen((v) => !v)}
-            className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors flex-shrink-0"
-          >
-            {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-            <span className="hidden sm:inline">{open ? 'hide' : 'show'}</span>
-          </button>
-        </div>
-
-        {/* Inline expanded content */}
-        {open && !modal && (
-          <div className="border-t border-gray-100 px-5 py-4">
-            {chatContent}
-          </div>
-        )}
-      </div>
-
-      {/* Modal overlay */}
-      {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
-          onClick={(e) => { if (e.target === e.currentTarget) setModal(false); }}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col">
-            {/* Modal header */}
-            <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-100 flex-shrink-0">
-              <div className="flex -space-x-1">
-                {selectedModels.map((m) => (
-                  <span key={m} className="w-3 h-3 rounded-full ring-2 ring-white inline-block"
-                    style={{ backgroundColor: MODELS[m].color }} />
-                ))}
-              </div>
-              <span className="text-sm font-semibold text-gray-800 flex-1">
-                Debate · {totalRounds} round{totalRounds !== 1 ? 's' : ''} · {totalMsgs} messages
-              </span>
-              <button
-                onClick={() => setModal(false)}
-                className="rounded-lg p-1.5 hover:bg-gray-100 transition-colors text-gray-400 hover:text-gray-700"
-              >
-                <X size={16} />
-              </button>
-            </div>
-            {/* Modal chat */}
-            <div className="overflow-y-auto px-6 py-5 flex-1">
-              {chatContent}
-            </div>
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
 // ─── Cost tracker ─────────────────────────────────────────────────────────────
 
 function CostTracker({ usage }: { usage: Partial<Record<ModelId, UsageTotals>> }) {
   const [open, setOpen] = useState(false);
 
   const totals = Object.values(usage).reduce(
-    (acc, u) => u ? { inputTokens: acc.inputTokens + u.inputTokens, outputTokens: acc.outputTokens + u.outputTokens, costUsd: acc.costUsd + u.costUsd } : acc,
+    (acc, u) =>
+      u
+        ? { inputTokens: acc.inputTokens + u.inputTokens, outputTokens: acc.outputTokens + u.outputTokens, costUsd: acc.costUsd + u.costUsd }
+        : acc,
     { inputTokens: 0, outputTokens: 0, costUsd: 0 }
   );
 
   return (
-    <div className="fixed bottom-4 right-4 z-30">
-      <div className="rounded-2xl border border-gray-200 bg-white shadow-lg overflow-hidden min-w-[210px]">
+    <div className="fixed bottom-0 right-0 sm:bottom-4 sm:right-4 z-30 w-full sm:w-auto">
+      <div className="rounded-none sm:rounded-2xl border-t sm:border border-gray-200 bg-white shadow-lg overflow-hidden sm:min-w-[210px]">
         <button
           onClick={() => setOpen((v) => !v)}
-          className="w-full flex items-center gap-2 px-4 py-2.5 hover:bg-gray-50 transition-colors"
+          className="w-full flex items-center gap-2 px-4 py-2.5 hover:bg-gray-50 transition-colors min-h-[44px]"
         >
           <Receipt size={13} className="text-gray-400 flex-shrink-0" />
           <span className="text-xs font-semibold text-gray-700 flex-1 text-left">Session cost</span>
@@ -388,27 +139,48 @@ function CostTracker({ usage }: { usage: Partial<Record<ModelId, UsageTotals>> }
   );
 }
 
+// ─── SSE stream reader ────────────────────────────────────────────────────────
+
+async function readSSEStream(res: Response, onEvent: (e: SSEEvent) => void) {
+  const reader  = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer    = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split('\n\n');
+    buffer = parts.pop() ?? '';
+    for (const part of parts) {
+      const line = part.trim();
+      if (!line.startsWith('data: ')) continue;
+      try { onEvent(JSON.parse(line.slice(6)) as SSEEvent); } catch { /* skip malformed */ }
+    }
+  }
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function ConsensusArena() {
-  // Config
-  const [topic, setTopic]               = useState('');
+  // Config state
+  const [topic, setTopic]                   = useState('');
   const [selectedModels, setSelectedModels] = useState<ModelId[]>(['claude-haiku', 'gpt-nano', 'gemini-flash']);
-  const [apiKeys, setApiKeys]           = useState<Partial<Record<ModelProvider, string>>>({});
-  const [showApiKeys, setShowApiKeys]   = useState(false);
+  const [apiKeys, setApiKeys]               = useState<Partial<Record<ModelProvider, string>>>({});
+  const [showApiKeys, setShowApiKeys]       = useState(false);
 
-  // Cost tracking — persists across all runs since page load
+  // Cost — persists across all runs since page load
   const [sessionUsage, setSessionUsage] = useState<Partial<Record<ModelId, UsageTotals>>>({});
 
-  // Session
-  const [phase, setPhase]                         = useState<SessionPhase>('config');
+  // Session state
+  const [phase, setPhase]                           = useState<SessionPhase>('config');
   const [currentDebatePhase, setCurrentDebatePhase] = useState<DebatePhase | null>(null);
-  const [positions, setPositions]                 = useState<PositionEntry[]>([]);
-  const [critiques, setCritiques]                 = useState<CritiqueEntry[]>([]);
+  const [echoAnalysis, setEchoAnalysis]             = useState<EchoAnalysis | null>(null);
+  const [positions, setPositions]                   = useState<PositionEntry[]>([]);
+  const [critiques, setCritiques]                   = useState<CritiqueEntry[]>([]);
   const [disagreementDescription, setDisagreementDescription] = useState<string | null>(null);
-  const [debateMessages, setDebateMessages]       = useState<DebateMsgEntry[]>([]);
-  const [consensus, setConsensus]                 = useState<string | null>(null);
-  const [error, setError]                         = useState<string | null>(null);
+  const [debateMessages, setDebateMessages]         = useState<DebateMsgEntry[]>([]);
+  const [consensus, setConsensus]                   = useState<string | null>(null);
+  const [error, setError]                           = useState<string | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -416,11 +188,30 @@ export function ConsensusArena() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [positions.length, critiques.length, debateMessages.length, consensus]);
 
+  // ─── Computed ──────────────────────────────────────────────────────────────
+
+  const completedPhases = useMemo((): DebatePhase[] => {
+    if (phase === 'complete') return [...PHASE_ORDER];
+    if (!currentDebatePhase) return echoAnalysis ? ['echo'] : [];
+    const idx = PHASE_ORDER.indexOf(currentDebatePhase);
+    return idx > 0 ? PHASE_ORDER.slice(0, idx) : [];
+  }, [phase, currentDebatePhase, echoAnalysis]);
+
+  const isPositionPhase  = currentDebatePhase === 'positions';
+  const isCritiquePhase  = currentDebatePhase === 'critiques';
+  const isDebatePhase    = currentDebatePhase === 'debate';
+  const isSynthesisPhase = currentDebatePhase === 'synthesis';
+  const pendingPositions = selectedModels.filter((m) => !positions.find((p) => p.model === m));
+
+  // ─── Helpers ───────────────────────────────────────────────────────────────
+
   function toggleModel(modelId: ModelId) {
     setSelectedModels((prev) =>
       prev.includes(modelId) ? prev.filter((m) => m !== modelId) : [...prev, modelId]
     );
   }
+
+  // ─── Debate-phase SSE event handler ────────────────────────────────────────
 
   const handleEvent = useCallback((event: SSEEvent) => {
     switch (event.type) {
@@ -428,21 +219,38 @@ export function ConsensusArena() {
         setCurrentDebatePhase(event.phase);
         break;
       case 'position_complete':
-        setPositions((prev) => [...prev, { model: event.model, modelName: event.modelName, summary: event.summary, fullText: event.fullText }]);
+        setPositions((prev) => [...prev, {
+          model: event.model, modelName: event.modelName,
+          summary: event.summary, fullText: event.fullText,
+        }]);
         break;
       case 'critique_message':
-        setCritiques((prev) => [...prev, { fromModel: event.fromModel, fromModelName: event.fromModelName, aboutModel: event.aboutModel, aboutModelName: event.aboutModelName, text: event.text, isDisagreement: event.isDisagreement }]);
+        setCritiques((prev) => [...prev, {
+          fromModel: event.fromModel, fromModelName: event.fromModelName,
+          aboutModel: event.aboutModel, aboutModelName: event.aboutModelName,
+          text: event.text, isDisagreement: event.isDisagreement,
+        }]);
         break;
       case 'disagreement_detected':
         setDisagreementDescription(event.description);
         break;
       case 'debate_message':
-        setDebateMessages((prev) => [...prev, { model: event.model, modelName: event.modelName, text: event.text, debateRound: event.debateRound }]);
+        setDebateMessages((prev) => [...prev, {
+          model: event.model, modelName: event.modelName,
+          text: event.text, debateRound: event.debateRound,
+        }]);
         break;
       case 'token_usage':
         setSessionUsage((prev) => {
-          const existing = prev[event.model] ?? { inputTokens: 0, outputTokens: 0, costUsd: 0 };
-          return { ...prev, [event.model]: { inputTokens: existing.inputTokens + event.inputTokens, outputTokens: existing.outputTokens + event.outputTokens, costUsd: existing.costUsd + event.costUsd } };
+          const ex = prev[event.model] ?? { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+          return {
+            ...prev,
+            [event.model]: {
+              inputTokens: ex.inputTokens + event.inputTokens,
+              outputTokens: ex.outputTokens + event.outputTokens,
+              costUsd: ex.costUsd + event.costUsd,
+            },
+          };
         });
         break;
       case 'consensus_complete':
@@ -458,15 +266,21 @@ export function ConsensusArena() {
     }
   }, []);
 
-  async function startConsensus() {
-    if (!topic.trim() || selectedModels.length < 2) return;
-    setPhase('running');
-    setCurrentDebatePhase(null);
+  // ─── Flow 1: Echo analysis (first POST — no echoAnalysis in body) ───────────
+
+  async function startEchoAnalysis(topicOverride?: string) {
+    const t = (topicOverride ?? topic).trim();
+    if (!t || selectedModels.length < 2) return;
+    if (topicOverride) setTopic(topicOverride);
+
+    setPhase('echo_analyzing');
+    setCurrentDebatePhase('echo');
     setPositions([]); setCritiques([]); setDisagreementDescription(null);
     setDebateMessages([]); setConsensus(null); setError(null);
+    setEchoAnalysis(null);
 
     try {
-      const body: ConsensusRequest = { topic: topic.trim(), models: selectedModels, apiKeys };
+      const body: ConsensusRequest = { topic: t, models: selectedModels, apiKeys };
       const res = await fetch('/api/consensus', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -474,41 +288,111 @@ export function ConsensusArena() {
       });
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split('\n\n');
-        buffer = parts.pop() ?? '';
-        for (const part of parts) {
-          const line = part.trim();
-          if (!line.startsWith('data: ')) continue;
-          try { handleEvent(JSON.parse(line.slice(6)) as SSEEvent); } catch { /* skip */ }
+      await readSSEStream(res, (event) => {
+        switch (event.type) {
+          case 'echo_analysis':
+            setEchoAnalysis(event.analysis);
+            setPhase('echo_confirm');
+            break;
+          case 'token_usage':
+            setSessionUsage((prev) => {
+              const ex = prev[event.model] ?? { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+              return {
+                ...prev,
+                [event.model]: {
+                  inputTokens: ex.inputTokens + event.inputTokens,
+                  outputTokens: ex.outputTokens + event.outputTokens,
+                  costUsd: ex.costUsd + event.costUsd,
+                },
+              };
+            });
+            break;
+          case 'error':
+            setError(event.message);
+            setPhase('config');
+            break;
         }
-      }
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
       setPhase('config');
     }
   }
 
+  // ─── Flow 2: Full debate (second POST — echoAnalysis confirmed by user) ─────
+
+  async function startDebate(confirmedAnalysis: EchoAnalysis) {
+    setEchoAnalysis(confirmedAnalysis);
+    setPhase('running');
+    setCurrentDebatePhase(null);
+    setPositions([]); setCritiques([]); setDisagreementDescription(null);
+    setDebateMessages([]); setConsensus(null); setError(null);
+
+    try {
+      const body: ConsensusRequest = {
+        topic: topic.trim(),
+        models: selectedModels,
+        apiKeys,
+        echoAnalysis: confirmedAnalysis,
+      };
+      const res = await fetch('/api/consensus', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+
+      await readSSEStream(res, handleEvent);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+      setPhase('config');
+    }
+  }
+
+  function handleReanalyze(editedTopic: string) {
+    startEchoAnalysis(editedTopic);
+  }
+
   function reset() {
     setPhase('config');
     setCurrentDebatePhase(null);
+    setEchoAnalysis(null);
     setPositions([]); setCritiques([]); setDisagreementDescription(null);
     setDebateMessages([]); setConsensus(null); setError(null);
   }
 
-  const isPositionPhase  = currentDebatePhase === 'positions';
-  const isCritiquePhase  = currentDebatePhase === 'critiques';
-  const isDebatePhase    = currentDebatePhase === 'debate';
-  const isSynthesisPhase = currentDebatePhase === 'synthesis';
-  const pendingPositions = selectedModels.filter((m) => !positions.find((p) => p.model === m));
+  // ─── Shared top bar ────────────────────────────────────────────────────────
 
-  // ─── Config screen ──────────────────────────────────────────────────────────
+  function TopBar({ showStatus }: { showStatus?: boolean }) {
+    return (
+      <div className="sticky top-0 z-20 bg-white/90 backdrop-blur-sm border-b border-gray-200 px-4 sm:px-5 py-3 flex items-center gap-4 flex-wrap">
+        <span className="text-xs font-bold tracking-widest text-gray-300">ECHONSENSUS</span>
+        <div className="h-4 w-px bg-gray-200 flex-shrink-0" />
+        <p className="text-sm text-gray-600 flex-1 truncate max-w-[200px] sm:max-w-none">{topic}</p>
+        <div className="flex items-center gap-3 flex-shrink-0 flex-wrap">
+          {showStatus && phase === 'running' && (
+            <span className="flex items-center gap-1.5 text-xs text-violet-500">
+              <Loader2 size={12} className="animate-spin" />
+              {isSynthesisPhase ? 'Synthesizing…' : isDebatePhase ? 'Debating…' : isCritiquePhase ? 'Critiquing…' : 'Thinking…'}
+            </span>
+          )}
+          {showStatus && phase === 'complete' && (
+            <span className="flex items-center gap-1.5 text-xs text-green-600">
+              <CheckCircle2 size={12} /> Complete
+            </span>
+          )}
+          <button
+            onClick={reset}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-500 hover:text-gray-800 hover:border-gray-400 transition-all min-h-[44px]"
+          >
+            <RotateCcw size={12} /> New
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Render: Config ────────────────────────────────────────────────────────
 
   if (phase === 'config') {
     return (
@@ -524,7 +408,7 @@ export function ConsensusArena() {
           </p>
         </div>
 
-        <div className="w-full max-w-xl rounded-2xl border border-gray-200 bg-white shadow-sm p-7 space-y-6">
+        <div className="w-full max-w-xl rounded-2xl border border-gray-200 bg-white shadow-sm px-4 sm:px-7 py-7 space-y-6">
           {/* Topic */}
           <div>
             <label className="block text-xs font-bold tracking-widest text-gray-400 uppercase mb-2">
@@ -555,14 +439,14 @@ export function ConsensusArena() {
                     <p className="text-[10px] font-bold tracking-widest text-gray-300 uppercase mb-1.5">
                       {group[0].provider}
                     </p>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2">
                       {group.map((model) => {
                         const active = selectedModels.includes(model.id);
                         return (
                           <button
                             key={model.id}
                             onClick={() => toggleModel(model.id)}
-                            className="px-3 py-1.5 rounded-lg text-xs font-medium border transition-all flex items-center gap-1.5"
+                            className="px-3 rounded-lg text-xs font-medium border transition-all flex items-center gap-1.5 min-h-[48px] justify-center sm:justify-start"
                             style={
                               active
                                 ? { backgroundColor: model.color + '12', borderColor: model.color + '55', color: model.color }
@@ -584,7 +468,7 @@ export function ConsensusArena() {
             </p>
           </div>
 
-          {/* API Keys — one per provider */}
+          {/* API Keys */}
           <div>
             <button
               onClick={() => setShowApiKeys((v) => !v)}
@@ -597,7 +481,7 @@ export function ConsensusArena() {
             {showApiKeys && (
               <div className="mt-3 space-y-2">
                 {PROVIDER_ORDER.map((providerKey) => {
-                  const rep = MODELS_BY_PROVIDER[providerKey][0]; // representative model for color/envKey
+                  const rep = MODELS_BY_PROVIDER[providerKey][0];
                   return (
                     <div key={providerKey} className="flex items-center gap-3">
                       <span className="text-xs font-medium w-20 shrink-0" style={{ color: rep.color }}>
@@ -608,7 +492,7 @@ export function ConsensusArena() {
                         value={apiKeys[providerKey] ?? ''}
                         onChange={(e) => setApiKeys((prev) => ({ ...prev, [providerKey]: e.target.value }))}
                         placeholder={rep.envKey}
-                        className="flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-600 placeholder-gray-300 focus:outline-none font-mono"
+                        className="flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-600 placeholder-gray-300 focus:outline-none font-mono min-h-[44px]"
                       />
                     </div>
                   );
@@ -625,9 +509,9 @@ export function ConsensusArena() {
           )}
 
           <button
-            onClick={startConsensus}
+            onClick={() => startEchoAnalysis()}
             disabled={!topic.trim() || selectedModels.length < 2}
-            className="w-full rounded-xl py-3 text-sm font-semibold flex items-center justify-center gap-2 transition-opacity disabled:opacity-30 disabled:cursor-not-allowed text-white"
+            className="w-full rounded-xl py-3 text-sm font-semibold flex items-center justify-center gap-2 transition-opacity disabled:opacity-30 disabled:cursor-not-allowed text-white min-h-[48px]"
             style={{ backgroundColor: '#7C3AED' }}
           >
             <Play size={14} />
@@ -638,63 +522,73 @@ export function ConsensusArena() {
     );
   }
 
-  // ─── Running / Complete ─────────────────────────────────────────────────────
+  // ─── Render: Echo analyzing ────────────────────────────────────────────────
+
+  if (phase === 'echo_analyzing') {
+    return (
+      <div className="min-h-screen bg-white flex flex-col items-center justify-center px-4">
+        <CostTracker usage={sessionUsage} />
+        <div className="w-full max-w-md text-center space-y-6 pb-16">
+          <ProgressStepper currentPhase="echo" completedPhases={[]} />
+          <Loader2 size={24} className="animate-spin text-violet-500 mx-auto" />
+          <p className="text-sm text-gray-500">Analyzing your prompt…</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Render: Echo confirm ──────────────────────────────────────────────────
+
+  if (phase === 'echo_confirm' && echoAnalysis) {
+    return (
+      <div className="min-h-screen bg-white flex flex-col">
+        <CostTracker usage={sessionUsage} />
+        <TopBar />
+        <div className="flex-1 overflow-y-auto pb-20">
+          <EchoConfirmation
+            analysis={echoAnalysis}
+            onConfirm={startDebate}
+            onReanalyze={handleReanalyze}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Render: Running / Complete ────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-white flex flex-col">
       <CostTracker usage={sessionUsage} />
+      <TopBar showStatus />
 
-      {/* Top bar */}
-      <div className="sticky top-0 z-20 bg-white/90 backdrop-blur-sm border-b border-gray-200 px-5 py-3 flex items-center gap-4">
-        <span className="text-xs font-bold tracking-widest text-gray-300">ECHONSENSUS</span>
-        <div className="h-4 w-px bg-gray-200" />
-        <p className="text-sm text-gray-600 flex-1 truncate">{topic}</p>
-        <div className="flex items-center gap-3 flex-shrink-0">
-          {phase === 'running' && (
-            <span className="flex items-center gap-1.5 text-xs text-violet-500">
-              <Loader2 size={12} className="animate-spin" />
-              {isSynthesisPhase ? 'Synthesizing…' : isDebatePhase ? 'Debating…' : isCritiquePhase ? 'Critiquing…' : 'Thinking…'}
-            </span>
-          )}
-          {phase === 'complete' && (
-            <span className="flex items-center gap-1.5 text-xs text-green-600">
-              <CheckCircle2 size={12} /> Complete
-            </span>
-          )}
-          <button
-            onClick={reset}
-            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-500 hover:text-gray-800 hover:border-gray-400 transition-all"
-          >
-            <RotateCcw size={12} /> New
-          </button>
-        </div>
-      </div>
-
-      {/* Feed */}
-      <div className="flex-1 w-full max-w-5xl mx-auto px-4 py-6 pb-16">
+      <div className="flex-1 w-full max-w-5xl mx-auto px-4 py-6 pb-24 space-y-4">
+        <ProgressStepper
+          currentPhase={currentDebatePhase}
+          completedPhases={completedPhases}
+        />
 
         {/* Initial Positions */}
         {(positions.length > 0 || isPositionPhase) && (
-          <>
-            <PhaseHeader label="Initial Positions" />
-            <div className="space-y-3">
-              {positions.map((entry) => <PositionCard key={entry.model} entry={entry} />)}
-              {isPositionPhase && pendingPositions.map((modelId) => <PositionCard key={modelId} entry={null} pending />)}
-            </div>
-          </>
+          <PositionCards
+            positions={positions}
+            pendingPositions={pendingPositions}
+            isLoading={isPositionPhase}
+          />
         )}
 
         {/* Cross-Critique */}
         {(critiques.length > 0 || isCritiquePhase) && (
-          <>
-            <PhaseHeader label="Cross-Critique" />
-            <CritiqueGrid critiques={critiques} selectedModels={selectedModels} loading={isCritiquePhase} />
-          </>
+          <CritiqueGrid
+            critiques={critiques}
+            selectedModels={selectedModels}
+            loading={isCritiquePhase}
+          />
         )}
 
         {/* Disagreement alert */}
         {disagreementDescription && (
-          <div className="mt-5 flex items-start gap-3 rounded-xl border border-orange-200 bg-orange-50 px-5 py-4">
+          <div className="flex items-start gap-3 rounded-xl border border-orange-200 bg-orange-50 px-5 py-4">
             <AlertTriangle size={16} className="text-orange-500 mt-0.5 flex-shrink-0" />
             <div>
               <p className="text-xs font-bold text-orange-700 uppercase tracking-wide mb-1">
@@ -707,31 +601,24 @@ export function ConsensusArena() {
 
         {/* Debate */}
         {(debateMessages.length > 0 || isDebatePhase) && (
-          <>
-            <PhaseHeader label="Debate" />
-            <DebateSection debateMessages={debateMessages} selectedModels={selectedModels} loading={isDebatePhase} />
-          </>
+          <DebateSection
+            debateMessages={debateMessages}
+            selectedModels={selectedModels}
+            loading={isDebatePhase}
+          />
         )}
 
         {/* Synthesis loading */}
         {isSynthesisPhase && !consensus && (
-          <>
-            <PhaseHeader label="Consensus" />
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 animate-pulse space-y-3">
-              <div className="h-3 bg-amber-100 rounded w-40" />
-              <div className="h-3 bg-amber-100 rounded w-full" />
-              <div className="h-3 bg-amber-100 rounded w-5/6" />
-            </div>
-          </>
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 animate-pulse space-y-3">
+            <div className="h-3 bg-amber-100 rounded w-40" />
+            <div className="h-3 bg-amber-100 rounded w-full" />
+            <div className="h-3 bg-amber-100 rounded w-5/6" />
+          </div>
         )}
 
         {/* Consensus */}
-        {consensus && (
-          <>
-            <PhaseHeader label="Consensus" />
-            <ConsensusSummary consensus={consensus} />
-          </>
-        )}
+        {consensus && <ConsensusSummary consensus={consensus} />}
 
         <div ref={bottomRef} />
       </div>

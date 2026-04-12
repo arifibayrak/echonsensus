@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { CollapsibleSection } from './ui/CollapsibleSection';
 
 interface Section {
   heading: string;
@@ -10,16 +11,15 @@ interface Section {
 // Pre-clean: strip --- separators and NOTE: prefixes, trim excess whitespace
 function preClean(raw: string): string {
   return raw
-    .replace(/^---+\s*$/gm, '')           // remove --- lines
-    .replace(/^NOTE:\s*/gim, '')          // remove NOTE: prefix
-    .replace(/\n{3,}/g, '\n\n')           // collapse 3+ newlines
+    .replace(/^---+\s*$/gm, '')
+    .replace(/^NOTE:\s*/gim, '')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
-// Split on **Heading** occurrences anywhere in the text (inline or on its own line)
+// Split on **Heading** occurrences anywhere in the text
 function parseSections(raw: string): Section[] {
   const cleaned = preClean(raw);
-  // parts alternates: [before, heading1, after1, heading2, after2, ...]
   const parts = cleaned.split(/\*\*([A-Za-z][^*\n]{2,60})\*\*/);
 
   if (parts.length <= 1) {
@@ -27,10 +27,9 @@ function parseSections(raw: string): Section[] {
   }
 
   const sections: Section[] = [];
-  // Start at index 1 (first captured heading); skip parts[0] (preamble before first heading)
   for (let i = 1; i < parts.length - 1; i += 2) {
     const heading = parts[i].trim();
-    const body    = parts[i + 1].replace(/^\s*\n/, '').trim(); // strip leading blank line
+    const body    = parts[i + 1].replace(/^\s*\n/, '').trim();
     if (heading) sections.push({ heading, body });
   }
   return sections.length > 0 ? sections : [{ heading: '', body: raw.trim() }];
@@ -38,7 +37,6 @@ function parseSections(raw: string): Section[] {
 
 // Bullet points may be newline-separated OR inline (• A • B • C on one line)
 function splitBullets(text: string): string[] {
-  // Normalise: every bullet marker → newline + marker
   const normalised = text.replace(/([^\n])\s*•\s*/g, '$1\n• ');
   return normalised
     .split('\n')
@@ -46,12 +44,17 @@ function splitBullets(text: string): string[] {
     .filter(Boolean);
 }
 
-// Render inline **bold** and *italic* markers
+// Extract first bullet for use as a subtitle in collapsed state
+function extractFirstBullet(body: string): string {
+  const bullets = splitBullets(body);
+  if (!bullets[0]) return '';
+  return bullets[0].length > 80 ? bullets[0].slice(0, 77) + '…' : bullets[0];
+}
+
+// Render inline **bold** and *italic*
 function renderInline(text: string): React.ReactNode {
-  // Split on **bold** first, then handle *italic* within plain segments
   const boldParts = text.split(/\*\*([^*]+)\*\*/);
   if (boldParts.length === 1) {
-    // No bold — check for italic
     const italicParts = text.split(/\*([^*]+)\*/);
     if (italicParts.length === 1) return text;
     return (
@@ -68,7 +71,6 @@ function renderInline(text: string): React.ReactNode {
         i % 2 === 1 ? (
           <strong key={i} className="font-semibold text-gray-900">{p}</strong>
         ) : (
-          // Also handle *italic* within non-bold segments
           renderInline(p) as React.ReactElement
         )
       )}
@@ -103,14 +105,25 @@ function renderBody(body: string, accentColor: string) {
   );
 }
 
-// Per-section styling
-const SECTION_META: Record<string, { label: string; accent: string; labelColor: string; borderColor: string; bg: string }> = {
+// Per-section config
+const SECTION_META: Record<
+  string,
+  {
+    label: string;
+    accent: string;
+    labelColor: string;
+    borderColor: string;
+    bg: string;
+    defaultOpen: boolean;
+  }
+> = {
   'Consensus Position': {
     label: 'CONSENSUS POSITION',
     accent: '#7C3AED',
     labelColor: 'text-violet-600',
     borderColor: 'border-violet-200',
     bg: 'bg-violet-50',
+    defaultOpen: true,
   },
   'What Everyone Agreed On': {
     label: 'AGREED ON',
@@ -118,6 +131,7 @@ const SECTION_META: Record<string, { label: string; accent: string; labelColor: 
     labelColor: 'text-emerald-600',
     borderColor: 'border-emerald-200',
     bg: 'bg-emerald-50',
+    defaultOpen: false,
   },
   'Where They Disagreed': {
     label: 'DISAGREEMENTS',
@@ -125,6 +139,7 @@ const SECTION_META: Record<string, { label: string; accent: string; labelColor: 
     labelColor: 'text-orange-500',
     borderColor: 'border-orange-200',
     bg: 'bg-orange-50',
+    defaultOpen: false,
   },
   'Final Synthesis': {
     label: 'FINAL SYNTHESIS',
@@ -132,6 +147,7 @@ const SECTION_META: Record<string, { label: string; accent: string; labelColor: 
     labelColor: 'text-blue-600',
     borderColor: 'border-blue-200',
     bg: 'bg-blue-50',
+    defaultOpen: true,
   },
 };
 
@@ -141,6 +157,7 @@ const DEFAULT_META = {
   labelColor: 'text-gray-400',
   borderColor: 'border-gray-200',
   bg: 'bg-gray-50',
+  defaultOpen: true,
 };
 
 export function ConsensusSummary({ consensus }: { consensus: string }) {
@@ -156,23 +173,24 @@ export function ConsensusSummary({ consensus }: { consensus: string }) {
         </span>
       </div>
 
-      {/* Sections */}
-      <div className="p-6 space-y-4">
+      {/* Collapsible sections */}
+      <div className="p-6 space-y-3">
         {sections.map((section, i) => {
           const meta = SECTION_META[section.heading] ?? DEFAULT_META;
+          const needsCollapse = !meta.defaultOpen;
+          const subtitle = needsCollapse ? extractFirstBullet(section.body) : undefined;
 
           return (
-            <div
+            <CollapsibleSection
               key={i}
-              className={`rounded-xl border px-5 py-4 ${meta.bg} ${meta.borderColor}`}
+              title={section.heading ? meta.label : 'NOTE'}
+              subtitle={subtitle}
+              defaultOpen={meta.defaultOpen}
             >
-              {section.heading && (
-                <p className={`text-[11px] font-bold tracking-widest ${meta.labelColor} uppercase mb-1`}>
-                  {meta.label}
-                </p>
-              )}
-              {renderBody(section.body, meta.accent)}
-            </div>
+              <div className={`rounded-xl border px-5 py-4 ${meta.bg} ${meta.borderColor}`}>
+                {renderBody(section.body, meta.accent)}
+              </div>
+            </CollapsibleSection>
           );
         })}
       </div>
